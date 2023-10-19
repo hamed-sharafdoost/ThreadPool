@@ -101,7 +101,7 @@ namespace VDap.Task6
                 task.WorkData = data;
                 task.Token = Guid.NewGuid();
                 task.CompletedTaskEvent += completed;
-                task.UserTaskException += exception; 
+                task.UserTaskException += exception;
             }
             repoOfTask.AddTask(task, priority);
             continueEvent.Set();
@@ -111,18 +111,18 @@ namespace VDap.Task6
         {
             while (true)
             {
-                continueEvent.WaitOne();
-                lock(synLock)
+                lock (synLock)
                 {
                     poolIsNotFull.WaitOne(1000);
-                    if (pool.Count(b => b.taskState == state.NotStarted || b.taskState == state.Completed) == 0)
+                    if (pool.Count(b => b.taskState == state.Completed) == 0)
                     {
                         workerThread newThread = new workerThread();
                         newThread.taskState = state.NotStarted;
                         addToPool(newThread);
                     }
-                } 
-            CleanPool();
+                }
+                continueEvent.WaitOne();
+                CleanPool();
             }
         }
         private void CleanPool()
@@ -163,6 +163,7 @@ namespace VDap.Task6
                         workerThread.LastProcess = DateTime.Now;
                         //workerThread.thread.Abort();
                     }
+                    InitializePool();
                 }
             }
             return;
@@ -174,26 +175,30 @@ namespace VDap.Task6
                 while (true)
                 {
                     UserTask task = repoOfTask.PopTask();
-                    if (task == null || task.IsCancelled) { continue; }
-                    newThread.Token = task.Token;
-                    if (newThread.taskState == state.Canceled) { break; }
-                    try
+                    if (task != null && !task.IsCancelled)
                     {
-                        newThread.taskState = state.Running;
-                        task.WorkItem.Invoke(task.WorkData);
-                        newThread.taskState = state.Completed;
-                        poolIsNotFull.Set();
-                        OnCompletedTask(task.CompletedTaskEvent, new CompletedTaskEventArgs { Token = task.Token, UserData = task.WorkData });
-                    }
-                    catch (Exception ex)
-                    {
-                        newThread.taskState = state.NotStarted;
-                        poolIsNotFull.Set();
-                        OnTaskException(task.UserTaskException,new UserExceptionEventArgs { Exception = ex,Token=task.Token,UserData=task.WorkData });
+                        newThread.Token = task.Token;
+                        if (newThread.taskState == state.Canceled) { break; }
+                        try
+                        {
+                            newThread.taskState = state.Running;
+                            task.WorkItem.Invoke(task.WorkData);
+                            newThread.taskState = state.Completed;
+                            newThread.LastProcess = DateTime.Now;
+                            poolIsNotFull.Set();
+                            OnCompletedTask(task.CompletedTaskEvent, new CompletedTaskEventArgs { Token = task.Token, UserData = task.WorkData });
+                        }
+                        catch (Exception ex)
+                        {
+                            newThread.taskState = state.NotStarted;
+                            poolIsNotFull.Set();
+                            OnTaskException(task.UserTaskException, new UserExceptionEventArgs { Exception = ex, Token = task.Token, UserData = task.WorkData });
+                        }
                     }
                 }
             });
             newThread.thread.Start();
+            newThread.thread.IsBackground = true;
             pool.Add(newThread);
             return;
         }
